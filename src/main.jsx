@@ -134,7 +134,31 @@ function App() {
       <main id="top">
         <section className="hero section-grid">
           <div className="hero-copy reveal"><p className="eyebrow">PERSONALISED PHYSIOTHERAPY <span>•</span> MEANINGFUL RECOVERY</p><h1>Move with<br /><em>more confidence.</em></h1><p className="hero-lede">Thoughtful rehabilitation for the moments that matter — delivered through video consultations or attentive home visits.</p><div className="hero-actions"><button className="button" onClick={() => setShowBooking(true)}>Book a consultation <ArrowUpRight size={17} /></button><button className="button button-secondary" onClick={openDirectWhatsApp}><MessageCircle size={17} /> Book via WhatsApp</button><a className="text-link" href="tel:+918401423844"><Phone size={16} /> Call now</a></div><div className="hero-meta"><div><strong>30+</strong><span>home visits</span></div><div><strong>2 yrs</strong><span>clinical experience</span></div><div><strong>BPT</strong><span>qualified care</span></div></div></div>
-          <div className="hero-visual"><div className="portrait-frame"><img className="portrait-image" src={therapistPhoto} alt="Dr. Shreya Parmar, physiotherapist" /></div><div className="orbit orbit-one"></div><div className="orbit orbit-two"></div><p className="side-note">NEUROLOGICAL &<br />POST-OPERATIVE<br />REHABILITATION</p></div>
+          <div className="hero-visual">
+            <div className="portrait-shell">
+              <div className="portrait-frame"><img className="portrait-image" src={therapistPhoto} alt="Dr. Shreya Parmar, physiotherapist" /></div>
+              <div className="orb orb-one"></div>
+              <div className="orb orb-two"></div>
+            </div>
+            <div className="feature-stack">
+              <div className="feature-row">
+                <div className="feature-icon icon-move">↗</div>
+                <div className="feature-copy"><span>Move</span><strong>Neurological &amp; Post-operative Rehabilitation</strong></div>
+              </div>
+              <div className="feature-row">
+                <div className="feature-icon icon-heal">❤</div>
+                <div className="feature-copy"><span>Heal</span><strong>Orthopaedic recovery &amp; mobility</strong></div>
+              </div>
+              <div className="feature-row">
+                <div className="feature-icon icon-rebuild">✦</div>
+                <div className="feature-copy"><span>Rebuild</span><strong>Strength, stability &amp; confidence</strong></div>
+              </div>
+              <div className="feature-row">
+                <div className="feature-icon icon-live">✿</div>
+                <div className="feature-copy"><span>Live better</span><strong>Meaningful movement in everyday life</strong></div>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section className="trust-strip"><span>Trusted, considered care for</span><strong>Orthopaedic recovery</strong><strong>Neurological rehabilitation</strong><strong>Geriatric mobility</strong><strong>Post-operative support</strong></section>
