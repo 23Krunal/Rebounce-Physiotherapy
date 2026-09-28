@@ -136,7 +136,7 @@ function App() {
           <div className="hero-copy reveal"><p className="eyebrow">PERSONALISED PHYSIOTHERAPY <span>•</span> MEANINGFUL RECOVERY</p><h1>Move with<br /><em>more confidence.</em></h1><p className="hero-lede">Thoughtful rehabilitation for the moments that matter — delivered through video consultations or attentive home visits.</p><div className="hero-actions"><button className="button" onClick={() => setShowBooking(true)}>Book a consultation <ArrowUpRight size={17} /></button><button className="button button-secondary" onClick={openDirectWhatsApp}><MessageCircle size={17} /> Book via WhatsApp</button><a className="text-link" href="tel:+918401423844"><Phone size={16} /> Call now</a></div><div className="hero-meta"><div><strong>30+</strong><span>home visits</span></div><div><strong>2 yrs</strong><span>clinical experience</span></div><div><strong>BPT</strong><span>qualified care</span></div></div></div>
           <div className="hero-visual" style={{ justifyContent: 'center' }}>
             <div className="portrait-shell">
-              <div className="portrait-frame" style={{ aspectRatio: '3 / 4', borderRadius: 140 }}><img className="portrait-image" src={therapistPhoto} alt="Dr. Shreya Parmar, physiotherapist" style={{ objectFit: 'contain', objectPosition: 'center', borderRadius: 14 }} /></div>
+              <div className="portrait-frame" style={{ aspectRatio: '3 / 4', borderRadius: 92 }}><img className="portrait-image" src={therapistPhoto} alt="Dr. Shreya Parmar, physiotherapist" style={{ objectFit: 'contain', objectPosition: 'center', borderRadius: 14 }} /></div>
             </div>
           </div>
         </section>
