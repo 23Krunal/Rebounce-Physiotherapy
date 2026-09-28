@@ -24,5 +24,4 @@ The API can send each consultation's name, phone, email, requested service, pref
 - Public homepage with video and home-visit treatment paths
 - Initial phone enquiry clearly separated from treatment
 - Appointment form with service-area prompt for home visits
-- Admin demo route at `/admin` with local appointment status controls
 - Contact endpoint, availability endpoint, testimonials endpoint, sitemap and robots file
