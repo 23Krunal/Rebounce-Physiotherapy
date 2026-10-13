@@ -4,8 +4,10 @@ import { ArrowUpRight, Check, Clock3, Instagram, Mail, MapPin, Menu, MessageCirc
 import therapistPhoto from '../Image/IMG-20260927-WA0009.jpg'
 import aboutPhoto from '../Image/image 2.jpg'
 import './styles.css'
+import './service-pages.css'
 
 const whatsappNumber = '918401423844'
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '')
 
 const services = [
   { number: '01', title: 'Initial phone enquiry', text: 'A short information call to understand your concern and guide you toward the right next step.', icon: Phone, note: 'Information & intake' },
@@ -13,17 +15,13 @@ const services = [
   { number: '03', title: 'Home physiotherapy', text: 'In-person assessment and tailored treatment in the comfort of your home.', icon: MapPin, note: 'In-person treatment' },
 ]
 
-const testimonials = [
-  { name: 'Meera', detail: 'Post-operative recovery', quote: 'The sessions gave me confidence to move again. Every step felt considered and manageable.' },
-  { name: 'Arjun', detail: 'Neurological rehabilitation', quote: 'Clear guidance, patient explanations and a plan that worked around my everyday life.' },
-]
-
 function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [showBooking, setShowBooking] = useState(false)
   const [submitted, setSubmitted] = useState(false)
+  const [bookingError, setBookingError] = useState('')
   const [whatsappLink, setWhatsappLink] = useState('')
-  const [booking, setBooking] = useState({ serviceType: 'Video Physiotherapy', patientName: '', phone: '', email: '', preferredDate: '', preferredTime: '', address: '', concern: '' })
+  const [booking, setBooking] = useState({ serviceType: 'Video Physiotherapy', patientName: '', phone: '', email: '', preferredDate: '', preferredTime: '', address: '', concern: '', consent: false })
 
   const updateBooking = (event) => setBooking({ ...booking, [event.target.name]: event.target.value })
   const buildWhatsAppUrl = (payload) => {
@@ -40,9 +38,9 @@ function App() {
       payload.concern ? `Concern: ${payload.concern}.` : '',
       '',
       'Please review my enquiry and call me back shortly.',
-    ].filter(Boolean).join(' %0A')
+    ].filter(Boolean).join('\n')
 
-    return `https://wa.me/${whatsappNumber}?text=${message}`
+    return `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`
   }
 
   const openDirectWhatsApp = () => {
@@ -54,20 +52,34 @@ function App() {
   const submitBooking = async (event) => {
     event.preventDefault()
     const fallbackLink = buildWhatsAppUrl(booking)
+    setBookingError('')
+    setWhatsappLink('')
+
+    if (!apiBaseUrl && import.meta.env.PROD) {
+      setWhatsappLink(fallbackLink)
+      setBookingError('Online booking is not connected yet, so your request has not been submitted. You can send it directly through WhatsApp below.')
+      return
+    }
 
     try {
-      const response = await fetch('http://localhost:4001/api/appointments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(booking) })
-      const data = await response.json()
-      const nextLink = data.whatsappUrl || fallbackLink
-      if (nextLink) {
-        setWhatsappLink(nextLink)
-        window.open(nextLink, '_blank', 'noopener,noreferrer')
+      const response = await fetch(`${apiBaseUrl}/api/appointments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(booking),
+      })
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok || data.received !== true) {
+        setWhatsappLink(data.whatsappUrl || fallbackLink)
+        setBookingError(data.message || 'We could not confirm that your request was received. You can send it directly through WhatsApp below.')
+        return
       }
+
+      setSubmitted(true)
     } catch {
       setWhatsappLink(fallbackLink)
-      window.open(fallbackLink, '_blank', 'noopener,noreferrer')
+      setBookingError('We could not connect to the booking service, so your request has not been submitted. You can send it directly through WhatsApp below.')
     }
-    setSubmitted(true)
   }
 
   return (
@@ -76,7 +88,7 @@ function App() {
         <a className="brand" href="#top" aria-label="Rebounce home"><span>SP</span><div><strong>Rebounce</strong><small>Personalized Physiotherapy</small></div></a>
         <button className="menu-toggle" onClick={() => setMenuOpen(!menuOpen)} aria-label="Toggle navigation">{menuOpen ? <X /> : <Menu />}</button>
         <nav className={menuOpen ? 'nav-links open' : 'nav-links'}>
-          <a href="#physiotherapy-approach" onClick={() => setMenuOpen(false)}>Approach</a><a href="#physiotherapy-services" onClick={() => setMenuOpen(false)}>Services</a><a href="#dr-shreya-parmar" onClick={() => setMenuOpen(false)}>About</a><a href="#physiotherapy-contact" onClick={() => setMenuOpen(false)}>Contact</a>
+          <a href="#physiotherapy-approach" onClick={() => setMenuOpen(false)}>Approach</a><a href="#physiotherapy-services" onClick={() => setMenuOpen(false)}>Services</a><a href="./home-physiotherapy.html">Home visits</a><a href="./online-physiotherapy.html">Online care</a><a href="#dr-shreya-parmar" onClick={() => setMenuOpen(false)}>About</a><a href="#physiotherapy-contact" onClick={() => setMenuOpen(false)}>Contact</a>
         </nav>
         <button className="button button-small" onClick={() => setShowBooking(true)}>Book consultation <ArrowUpRight size={16} /></button>
       </header>
@@ -89,15 +101,15 @@ function App() {
               <Check size={28} />
               <p className="eyebrow">ENQUIRY RECEIVED</p>
               <h2>Thank you,<br /><em>{booking.patientName || 'we have it.'}</em></h2>
-              <p>Dr. Shreya's team will call you to understand your requirement and confirm the next step.</p>
-              {whatsappLink && <a className="button button-secondary" href={whatsappLink} target="_blank" rel="noreferrer">Continue on WhatsApp</a>}
-              <button className="button" onClick={() => { setShowBooking(false); setSubmitted(false); setWhatsappLink('') }}>Done</button>
+              <p>Your request was sent to the booking service. The team will review it and follow up using the contact details you provided.</p>
+              <button className="button" onClick={() => { setShowBooking(false); setSubmitted(false); setBookingError(''); setWhatsappLink('') }}>Done</button>
             </div>
           ) : (
             <>
               <p className="eyebrow">BOOK A CONSULTATION</p>
               <h2>Let’s find the<br /><em>right next step.</em></h2>
               <p className="modal-intro">Share a few details. This starts with an information call, not treatment over the phone.</p>
+              {bookingError && <div className="booking-error" role="alert"><p>{bookingError}</p>{whatsappLink && <a className="button button-secondary" href={whatsappLink} target="_blank" rel="noreferrer"><MessageCircle size={17} /> Send via WhatsApp</a>}</div>}
               <form onSubmit={submitBooking}>
                 <label>Your name<input required name="patientName" value={booking.patientName} onChange={updateBooking} placeholder="Full name" /></label>
                 <div className="form-row">
@@ -111,6 +123,7 @@ function App() {
                 </div>
                 <label>Address <span>(optional)</span><input name="address" value={booking.address} onChange={updateBooking} placeholder="Your address" /></label>
                 <label>Your concern<textarea name="concern" value={booking.concern} onChange={updateBooking} placeholder="Tell us a little about your condition or goal" rows={4} /></label>
+                <label className="consent"><input required type="checkbox" name="consent" checked={booking.consent} onChange={(event) => setBooking({ ...booking, consent: event.target.checked })} /> I agree to share these details with Rebounce so the team can respond to my appointment request.</label>
                 <button className="button" type="submit">Send enquiry <ArrowUpRight size={17} /></button>
               </form>
             </>
@@ -123,7 +136,7 @@ function App() {
           <div className="hero-copy reveal"><p className="eyebrow">PERSONALISED PHYSIOTHERAPY <span>•</span> MEANINGFUL RECOVERY</p><h1>Physiotherapy in Ahmedabad,<br /><em>made personal.</em></h1><p className="hero-lede">Personalised neurological, orthopaedic and post-operative rehabilitation by video consultation or home visit in Ahmedabad.</p><div className="hero-actions"><button className="button" onClick={() => setShowBooking(true)}>Book a consultation <ArrowUpRight size={17} /></button><button className="button button-secondary" onClick={openDirectWhatsApp}><MessageCircle size={17} /> Book via WhatsApp</button><a className="text-link" href="tel:+918401423844"><Phone size={16} /> Call now</a></div><div className="hero-meta"><div><strong>30+</strong><span>home visits</span></div><div><strong>2 yrs</strong><span>clinical experience</span></div><div><strong>BPT</strong><span>qualified care</span></div></div></div>
           <div className="hero-visual" style={{ justifyContent: 'center' }}>
             <div className="portrait-shell">
-              <div className="portrait-frame" style={{ aspectRatio: '3 / 4', borderRadius: 92 }}><img className="portrait-image" src={therapistPhoto} alt="Dr. Shreya Parmar, physiotherapist" style={{ objectFit: 'contain', objectPosition: 'center', borderRadius: 14 }} /></div>
+                <div className="portrait-frame" style={{ aspectRatio: '3 / 4', borderRadius: 92 }}><img className="portrait-image" src={therapistPhoto} alt="Dr. Shreya Parmar standing in a white coat in a bright physiotherapy studio" style={{ objectFit: 'contain', objectPosition: 'center', borderRadius: 14 }} /></div>
             </div>
           </div>
         </section>
@@ -136,9 +149,7 @@ function App() {
 
         <section className="pathway section-grid"><div className="section-label"><span>02</span><span>THE PATIENT JOURNEY</span></div><div className="pathway-body"><p className="eyebrow">A SIMPLE START</p><h2>From first conversation<br />to <em>feeling stronger.</em></h2><div className="steps"><div><b>01</b><span>Phone enquiry</span><small>We understand your concern and discuss what may help.</small></div><div><b>02</b><span>Choose your care</span><small>Video physiotherapy or a home visit within the service area.</small></div><div><b>03</b><span>Build momentum</span><small>Personalised treatment, practical guidance and follow-up.</small></div></div></div></section>
 
-        <section className="about-section section-grid" id="dr-shreya-parmar"><div className="about-photo"><img className="about-image" src={aboutPhoto} alt="Dr. Shreya Parmar, physiotherapist, at her clinic" /><span>Dr. Shreya Parmar (PT)</span></div><div className="about-copy"><p className="eyebrow">A LITTLE ABOUT ME</p><h2>Professional care.<br /><em>Humanly delivered.</em></h2><p>Dr. Shreya Parmar (PT) is a physiotherapist specialising in neurological and post-operative rehabilitation, with clinical experience in personalised physiotherapy and home-based care in Ahmedabad.</p><p>Her approach combines clinical assessment, therapeutic exercises, mobility training and progressive rehabilitation tailored to each patient's needs and goals.</p><div className="credential-list"><span><Check size={15} /> BPT qualified</span><span><Check size={15} /> 30+ home visits</span><span><Check size={15} /> Home & video care</span></div></div></section>
-
-        <section className="testimonials"><div className="section-heading"><div><p className="eyebrow">PATIENT NOTES</p><h2>Progress worth<br /><em>talking about.</em></h2></div><div className="review-mark">“</div></div><div className="testimonial-grid">{testimonials.map((item) => <article className="testimonial" key={item.name}><p>“{item.quote}”</p><div><strong>{item.name}</strong><span>{item.detail}</span></div></article>)}</div></section>
+          <section className="about-section section-grid" id="dr-shreya-parmar"><div className="about-photo"><img className="about-image" src={aboutPhoto} alt="Dr. Shreya Parmar in a white coat against a plain white background" /><span>Dr. Shreya Parmar (PT)</span></div><div className="about-copy"><p className="eyebrow">A LITTLE ABOUT ME</p><h2>Professional care.<br /><em>Humanly delivered.</em></h2><p>Dr. Shreya Parmar (PT) is a physiotherapist specialising in neurological and post-operative rehabilitation, with clinical experience in personalised physiotherapy and home-based care in Ahmedabad.</p><p>Her approach combines clinical assessment, therapeutic exercises, mobility training and progressive rehabilitation tailored to each patient's needs and goals.</p><div className="credential-list"><span><Check size={15} /> BPT qualified</span><span><Check size={15} /> 30+ home visits</span><span><Check size={15} /> Home & video care</span></div></div></section>
 
         <section className="contact-section" id="physiotherapy-contact"><div><p className="eyebrow">READY WHEN YOU ARE</p><h2>Start with a<br /><em>conversation.</em></h2></div><div className="contact-details"><p>Book an appointment for physiotherapy at home in Ahmedabad and nearby areas, subject to availability.</p><a href="tel:+918401423844"><Phone size={17} /> +91 84014 23844</a><a href="mailto:shreyaparmar623@gmail.com"><Mail size={17} />shreyaparmar623@gmail.com</a><div className="contact-actions"><button className="button" onClick={() => setShowBooking(true)}>Book a consultation <ArrowUpRight size={17} /></button><button className="button button-secondary" onClick={openDirectWhatsApp}><MessageCircle size={17} /> Book via WhatsApp</button></div></div></section>
       </main>

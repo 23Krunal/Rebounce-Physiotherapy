@@ -2,10 +2,10 @@ import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import nodemailer from 'nodemailer'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
-const app = express()
 const port = Number(process.env.PORT || 4001)
-const enquiries = []
 const adminEmail = (process.env.ADMIN_EMAIL || 'shreyaparmar623@gmail.com').trim()
 const whatsappNumber = (process.env.WHATSAPP_NUMBER || '918401423844').replace(/\D/g, '')
 const metaWhatsAppAccessToken = (process.env.META_WHATSAPP_ACCESS_TOKEN || '').trim()
@@ -27,9 +27,19 @@ const smtpConfig = {
 
 const transporter = smtpConfig.auth ? nodemailer.createTransport(smtpConfig) : null
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[character])
+}
+
 async function sendAppointmentEmail(appointment) {
   if (!transporter) {
-    console.warn('SMTP not configured yet. Booking saved locally but no email was sent.')
+    console.warn('SMTP not configured. No appointment email was sent.')
     return { sent: false }
   }
 
@@ -51,14 +61,14 @@ async function sendAppointmentEmail(appointment) {
 
   const html = `
     <h2>New consultation request</h2>
-    <p><strong>Name:</strong> ${appointment.patientName}</p>
-    <p><strong>Phone:</strong> ${appointment.phone}</p>
-    <p><strong>Email:</strong> ${appointment.email || 'Not provided'}</p>
-    <p><strong>Service:</strong> ${appointment.serviceType}</p>
-    <p><strong>Preferred date:</strong> ${appointment.preferredDate}</p>
-    <p><strong>Preferred time:</strong> ${appointment.preferredTime}</p>
-    <p><strong>Address:</strong> ${appointment.address || 'Not provided'}</p>
-    <p><strong>Concern:</strong> ${appointment.concern || 'Not provided'}</p>
+    <p><strong>Name:</strong> ${escapeHtml(appointment.patientName)}</p>
+    <p><strong>Phone:</strong> ${escapeHtml(appointment.phone)}</p>
+    <p><strong>Email:</strong> ${escapeHtml(appointment.email || 'Not provided')}</p>
+    <p><strong>Service:</strong> ${escapeHtml(appointment.serviceType)}</p>
+    <p><strong>Preferred date:</strong> ${escapeHtml(appointment.preferredDate)}</p>
+    <p><strong>Preferred time:</strong> ${escapeHtml(appointment.preferredTime)}</p>
+    <p><strong>Address:</strong> ${escapeHtml(appointment.address || 'Not provided')}</p>
+    <p><strong>Concern:</strong> ${escapeHtml(appointment.concern || 'Not provided')}</p>
   `
 
   await transporter.sendMail({
@@ -99,13 +109,13 @@ async function sendPatientConfirmationEmail(appointment) {
       <div style="padding: 24px 28px; background: #f7f2ea; border: 1px solid #eadbc7; border-radius: 14px;">
         <p style="margin: 0 0 12px; font-size: 12px; letter-spacing: 1.5px; color: #7d6956; text-transform: uppercase;">Rebounce Physiotherapy</p>
         <h2 style="margin: 0 0 16px; color: #1a1a1a;">Thank you for contacting us</h2>
-        <p style="margin: 0 0 12px;">Dear ${appointment.patientName},</p>
+         <p style="margin: 0 0 12px;">Dear ${escapeHtml(appointment.patientName)},</p>
         <p style="margin: 0 0 12px;">We have received your consultation request and our team is reviewing it.</p>
         <p style="margin: 0 0 12px;">Dr. Shreya Parmar will review your enquiry and call you back shortly to discuss the next steps and guide you toward the right care plan.</p>
         <div style="background: #ffffff; border: 1px solid #e9dfd4; border-radius: 10px; padding: 16px; margin: 18px 0;">
-          <p style="margin: 0 0 8px;"><strong>Preferred service:</strong> ${appointment.serviceType}</p>
-          <p style="margin: 0 0 8px;"><strong>Preferred date:</strong> ${appointment.preferredDate}</p>
-          <p style="margin: 0;"><strong>Preferred time:</strong> ${appointment.preferredTime}</p>
+           <p style="margin: 0 0 8px;"><strong>Preferred service:</strong> ${escapeHtml(appointment.serviceType)}</p>
+           <p style="margin: 0 0 8px;"><strong>Preferred date:</strong> ${escapeHtml(appointment.preferredDate)}</p>
+           <p style="margin: 0 0 8px;"><strong>Preferred time:</strong> ${escapeHtml(appointment.preferredTime)}</p>
         </div>
         <p style="margin: 0;">Warm regards,<br />The Rebounce Physiotherapy Team</p>
       </div>
@@ -138,9 +148,9 @@ function buildWhatsAppUrl(appointment) {
     appointment.concern ? `Concern: ${appointment.concern}.` : '',
     '',
     'Please review my enquiry and call me back shortly.',
-  ].filter(Boolean).join(' %0A')
+  ].filter(Boolean).join('\n')
 
-  return `https://wa.me/${whatsappNumber}?text=${message}`
+  return `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`
 }
 
 async function sendAppointmentWhatsApp(appointment) {
@@ -191,62 +201,126 @@ async function sendAppointmentWhatsApp(appointment) {
   }
 }
 
-app.use(cors())
-app.use(express.json({ limit: '100kb' }))
+export function createApp({
+  deliverAppointmentEmail = sendAppointmentEmail,
+  deliverPatientConfirmation = sendPatientConfirmationEmail,
+  deliverWhatsApp = sendAppointmentWhatsApp,
+  allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173').split(',').map((origin) => origin.trim()),
+} = {}) {
+  const app = express()
+  const enquiries = []
+  const allowedOriginSet = new Set(allowedOrigins.filter(Boolean))
 
-app.get('/api/health', (_req, res) => res.json({ ok: true }))
-app.post('/api/appointments', async (req, res) => {
-  const { patientName, phone, email, serviceType, preferredDate, preferredTime, address, concern } = req.body
-  if (!patientName || !phone || !email || !serviceType || !preferredDate || !preferredTime) {
-    return res.status(400).json({ message: 'Please complete the required booking fields: name, phone, email, service, date and time.' })
-  }
+  app.use(cors({
+    origin(origin, callback) {
+      if (!origin || allowedOriginSet.has(origin)) return callback(null, true)
+      return callback(new Error('Origin not allowed'))
+    },
+  }))
+  app.use(express.json({ limit: '20kb' }))
 
-  const appointment = {
-    id: crypto.randomUUID(), patientName, phone, email: String(email).trim(), serviceType,
-    preferredDate, preferredTime, address: address || '', concern: concern || '',
-    createdAt: new Date().toISOString(),
-    emailSent: false,
-    confirmationSent: false,
-    whatsappSent: false,
-    whatsappUrl: '',
-  }
+  app.get('/api/health', (_req, res) => res.json({ ok: true }))
+  app.post('/api/appointments', async (req, res) => {
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}
+    const appointment = Object.fromEntries(
+      Object.entries({
+        patientName: 100,
+        phone: 25,
+        email: 254,
+        serviceType: 40,
+        preferredDate: 10,
+        preferredTime: 30,
+        address: 300,
+        concern: 2000,
+      }).map(([field, maxLength]) => [field, typeof body[field] === 'string' ? body[field].trim() : '']),
+    )
+    const requiredFields = ['patientName', 'phone', 'email', 'serviceType', 'preferredDate', 'preferredTime']
+    const lengthsValid = Object.entries(appointment).every(([field, value]) => value.length <= {
+      patientName: 100, phone: 25, email: 254, serviceType: 40,
+      preferredDate: 10, preferredTime: 30, address: 300, concern: 2000,
+    }[field])
+    const parsedDate = new Date(`${appointment.preferredDate}T00:00:00Z`)
+    const today = new Date().toISOString().slice(0, 10)
+    const validDate = /^\d{4}-\d{2}-\d{2}$/.test(appointment.preferredDate)
+      && !Number.isNaN(parsedDate.getTime())
+      && parsedDate.toISOString().slice(0, 10) === appointment.preferredDate
+      && appointment.preferredDate >= today
+    const validService = ['Video Physiotherapy', 'Home Physiotherapy'].includes(appointment.serviceType)
+    const validTime = ['Morning (9-12)', 'Afternoon (12-3)', 'Evening (3-6)'].includes(appointment.preferredTime)
 
-  appointment.whatsappUrl = buildWhatsAppUrl(appointment)
+    if (
+      requiredFields.some((field) => !appointment[field])
+      || !lengthsValid
+      || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(appointment.email)
+      || !/^\+?[0-9()\s-]{7,25}$/.test(appointment.phone)
+      || !validDate
+      || !validService
+      || !validTime
+      || body.consent !== true
+    ) {
+      return res.status(400).json({ message: 'Enter valid contact details and choose a listed service, date and time.' })
+    }
 
-  try {
-    const emailResult = await sendAppointmentEmail(appointment)
-    appointment.emailSent = emailResult.sent
-  } catch (error) {
-    console.error('Failed to send consultation email:', error)
-  }
+    Object.assign(appointment, {
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      emailSent: false,
+      confirmationSent: false,
+      whatsappSent: false,
+    })
+    appointment.whatsappUrl = buildWhatsAppUrl(appointment)
 
-  try {
-    const confirmationResult = await sendPatientConfirmationEmail(appointment)
-    appointment.confirmationSent = confirmationResult.sent
-  } catch (error) {
-    console.error('Failed to send patient confirmation email:', error)
-  }
+    try {
+      const emailResult = await deliverAppointmentEmail(appointment)
+      appointment.emailSent = Boolean(emailResult?.sent)
+    } catch (error) {
+      console.error('Failed to send consultation email:', error)
+    }
 
-  const whatsappResult = await sendAppointmentWhatsApp(appointment)
-  appointment.whatsappSent = whatsappResult.sent
+    try {
+      const whatsappResult = await deliverWhatsApp(appointment)
+      appointment.whatsappSent = Boolean(whatsappResult?.sent)
+    } catch (error) {
+      console.error('Failed to send consultation WhatsApp:', error)
+    }
 
-  res.status(201).json({
-    appointment,
-    emailSent: appointment.emailSent,
-    confirmationSent: appointment.confirmationSent,
-    whatsappSent: appointment.whatsappSent,
-    whatsappUrl: appointment.whatsappUrl,
+    if (!appointment.emailSent && !appointment.whatsappSent) {
+      return res.status(503).json({
+        received: false,
+        message: 'We could not send your request. Please contact us directly or use WhatsApp.',
+        whatsappUrl: appointment.whatsappUrl,
+      })
+    }
+
+    try {
+      const confirmationResult = await deliverPatientConfirmation(appointment)
+      appointment.confirmationSent = Boolean(confirmationResult?.sent)
+    } catch (error) {
+      console.error('Failed to send patient confirmation email:', error)
+    }
+
+    return res.status(201).json({
+      received: true,
+      appointmentId: appointment.id,
+      emailSent: appointment.emailSent,
+      confirmationSent: appointment.confirmationSent,
+      whatsappSent: appointment.whatsappSent,
+    })
   })
-})
-app.post('/api/contact', (req, res) => {
-  const { name, phone, message } = req.body
-  if (!name || !phone || !message) return res.status(400).json({ message: 'Name, phone and message are required.' })
-  enquiries.unshift({ id: crypto.randomUUID(), ...req.body, createdAt: new Date().toISOString(), status: 'New' })
-  res.status(201).json({ message: 'Thanks. Your enquiry has been received.' })
-})
-app.get('/api/testimonials', (_req, res) => res.json([
-  { name: 'Meera', category: 'Post-operative recovery', content: 'The sessions gave me confidence to move again. Every step felt considered and manageable.' },
-  { name: 'Arjun', category: 'Neurological rehabilitation', content: 'Clear guidance, patient explanations and a plan that worked around my everyday life.' },
-]))
-app.get('/api/availability', (_req, res) => res.json({ video: true, homeVisit: true, hours: 'Mon-Sat, 9:00 AM - 6:00 PM' }))
-app.listen(port, () => console.log(`API listening on http://localhost:${port}`))
+
+  app.post('/api/contact', (req, res) => {
+    const { name, phone, message } = req.body
+    if (!name || !phone || !message) return res.status(400).json({ message: 'Name, phone and message are required.' })
+    enquiries.unshift({ id: crypto.randomUUID(), ...req.body, createdAt: new Date().toISOString(), status: 'New' })
+    res.status(201).json({ message: 'Thanks. Your enquiry has been received.' })
+  })
+  app.get('/api/testimonials', (_req, res) => res.json([]))
+  app.get('/api/availability', (_req, res) => res.json({ video: true, homeVisit: true, hours: 'Mon-Sat, 9:00 AM - 6:00 PM' }))
+
+  return app
+}
+
+const app = createApp()
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  app.listen(port, () => console.log(`API listening on port ${port}`))
+}
