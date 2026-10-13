@@ -56,7 +56,7 @@ async function sendAppointmentEmail(appointment) {
     `Address: ${appointment.address || 'Not provided'}`,
     `Concern: ${appointment.concern || 'Not provided'}`,
     '',
-    'This enquiry came from the Rebounce physiotherapy website.',
+    'This enquiry came from the ReBounce physiotherapy website.',
   ].join('\n')
 
   const html = `
@@ -72,7 +72,7 @@ async function sendAppointmentEmail(appointment) {
   `
 
   await transporter.sendMail({
-    from: `"Rebounce Consultation" <${smtpUser || adminEmail}>`,
+    from: `"ReBounce Consultation" <${smtpUser || adminEmail}>`,
     to: adminEmail,
     replyTo: appointment.email || appointment.phone,
     subject,
@@ -90,7 +90,7 @@ async function sendPatientConfirmationEmail(appointment) {
 
   const subject = 'We have received your consultation request'
   const text = [
-    'Thank you for contacting Rebounce Physiotherapy.',
+    'Thank you for contacting ReBounce Physiotherapy.',
     '',
     'We have received your consultation request and our team is reviewing it.',
     'Dr. Shreya Parmar will review your enquiry and call you back shortly to discuss the next steps.',
@@ -101,13 +101,13 @@ async function sendPatientConfirmationEmail(appointment) {
     `Preferred time: ${appointment.preferredTime}`,
     '',
     'Warm regards,',
-    'Rebounce Physiotherapy Team',
+    'ReBounce Physiotherapy Team',
   ].join('\n')
 
   const html = `
     <div style="font-family: Arial, sans-serif; line-height: 1.7; color: #1b1b1b; max-width: 640px; margin: 0 auto;">
       <div style="padding: 24px 28px; background: #f7f2ea; border: 1px solid #eadbc7; border-radius: 14px;">
-        <p style="margin: 0 0 12px; font-size: 12px; letter-spacing: 1.5px; color: #7d6956; text-transform: uppercase;">Rebounce Physiotherapy</p>
+        <p style="margin: 0 0 12px; font-size: 12px; letter-spacing: 1.5px; color: #7d6956; text-transform: uppercase;">ReBounce Physiotherapy</p>
         <h2 style="margin: 0 0 16px; color: #1a1a1a;">Thank you for contacting us</h2>
          <p style="margin: 0 0 12px;">Dear ${escapeHtml(appointment.patientName)},</p>
         <p style="margin: 0 0 12px;">We have received your consultation request and our team is reviewing it.</p>
@@ -117,13 +117,13 @@ async function sendPatientConfirmationEmail(appointment) {
            <p style="margin: 0 0 8px;"><strong>Preferred date:</strong> ${escapeHtml(appointment.preferredDate)}</p>
            <p style="margin: 0 0 8px;"><strong>Preferred time:</strong> ${escapeHtml(appointment.preferredTime)}</p>
         </div>
-        <p style="margin: 0;">Warm regards,<br />The Rebounce Physiotherapy Team</p>
+        <p style="margin: 0;">Warm regards,<br />The ReBounce Physiotherapy Team</p>
       </div>
     </div>
   `
 
   await transporter.sendMail({
-    from: `"Rebounce Physiotherapy" <${smtpUser || adminEmail}>`,
+    from: `"ReBounce Physiotherapy" <${smtpUser || adminEmail}>`,
     to: appointment.email,
     replyTo: adminEmail,
     subject,
@@ -136,7 +136,7 @@ async function sendPatientConfirmationEmail(appointment) {
 
 function buildWhatsAppUrl(appointment) {
   const message = [
-    'Hello Rebounce Physiotherapy,',
+    'Hello ReBounce Physiotherapy,',
     '',
     `I am ${appointment.patientName}.`,
     `My phone number is ${appointment.phone}.`,

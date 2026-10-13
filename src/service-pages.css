@@ -17,12 +17,20 @@
 .service-page-contact { display:grid; grid-template-columns:1fr 1fr; gap:10vw; padding:82px var(--page-pad); }
 .service-page-contact>div:last-child { max-width:430px; align-self:end; }
 .service-page-contact>div:last-child>p:first-child { color:var(--muted); font-size:14px; line-height:1.7; }
+.service-faq { padding:78px var(--page-pad); }
+.service-faq h2 { font-size:clamp(38px,4.5vw,60px); }
+.faq-list { max-width:900px; border-bottom:1px solid var(--line); }
+.faq-list details { border-top:1px solid var(--line); padding:20px 0; }
+.faq-list summary { cursor:pointer; font:500 19px 'Playfair Display',serif; list-style-position:outside; }
+.faq-list details p { max-width:720px; margin:14px 0 0; color:var(--muted); font-size:14px; line-height:1.75; }
 .site-shell > .modal-backdrop:last-child { display:none; }
 @media (max-width:760px) {
+  .topbar { height:auto; min-height:70px; flex-wrap:wrap; padding-top:12px; padding-bottom:12px; }
+  .topbar .nav-links { display:flex; position:static; order:4; flex-basis:100%; flex-direction:row; flex-wrap:wrap; gap:12px 18px; padding:12px 0 4px; background:transparent; border:0; }
   .service-page-hero { grid-template-columns:1fr; padding:60px 20px; }
   .service-page-photo { min-height:0; }
   .service-page-photo img { height:min(115vw,540px); min-height:0; }
-  .service-page-section,.service-page-contact { padding:68px 20px; }
+  .service-page-section,.service-page-contact,.service-faq { padding:68px 20px; }
   .service-page-points,.service-page-contact { grid-template-columns:1fr; }
   .service-page-points { gap:18px; margin-top:35px; }
   .service-page-contact { gap:24px; }

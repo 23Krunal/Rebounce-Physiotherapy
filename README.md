@@ -1,6 +1,6 @@
 # Dr. Shreya Parmar Physiotherapy
 
-A responsive React + Vite physiotherapy booking website with a lightweight Express API.
+A static HTML physiotherapy website with a React booking dialog and a lightweight Express API.
 
 ## Run locally
 
@@ -25,7 +25,8 @@ The API can send each consultation's name, phone, email, requested service, pref
 
 ## Included flows
 
-- Public homepage with video and home-visit treatment paths
+- Static homepage and separate home-visit and online physiotherapy pages
+- React-mounted appointment dialog
 - Initial phone enquiry clearly separated from treatment
 - Appointment form with service-area prompt for home visits
 - Contact endpoint, availability endpoint, testimonials endpoint, sitemap and robots file
