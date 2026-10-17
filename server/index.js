@@ -189,11 +189,15 @@ export function createApp({
   deliverPatientConfirmation = sendPatientConfirmationEmail,
   deliverWhatsApp = sendAppointmentWhatsApp,
   database,
+  databaseProvider = getDatabasePool,
+  databaseInitializer = initializeDatabase,
   rateLimitMax = 20,
   allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173').split(',').map((origin) => origin.trim()),
 } = {}) {
   const app = express()
   const allowedOriginSet = new Set(allowedOrigins.filter(Boolean))
+  let activeDatabase = database
+  let databaseInitialization
   const writeRateLimit = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: rateLimitMax,
@@ -201,6 +205,20 @@ export function createApp({
     legacyHeaders: false,
     handler: (_req, res) => res.status(429).json({ message: 'Too many requests. Please try again later.' }),
   })
+
+  async function getReadyDatabase() {
+    if (!activeDatabase) activeDatabase = databaseProvider()
+    if (!databaseInitialization) {
+      databaseInitialization = Promise.resolve()
+        .then(() => databaseInitializer(activeDatabase))
+        .catch((error) => {
+          databaseInitialization = undefined
+          throw error
+        })
+    }
+    await databaseInitialization
+    return activeDatabase
+  }
 
   app.use(cors({
     origin(origin, callback) {
@@ -266,8 +284,10 @@ export function createApp({
       confirmationSent: false,
       whatsappSent: false,
     })
+
     try {
-      await (database || getDatabasePool()).execute(
+      const db = await getReadyDatabase()
+      await db.execute(
         `INSERT INTO appointments
           (id, patient_name, phone, email, service_type, preferred_date, preferred_time,
            address, concern, consent_at, notification_status)
@@ -304,16 +324,19 @@ export function createApp({
       console.error('Failed to send consultation WhatsApp.')
     }
 
-    try {
-      const confirmationResult = await deliverPatientConfirmation(appointment)
-      appointment.confirmationSent = Boolean(confirmationResult?.sent)
-    } catch {
-      console.error('Failed to send patient confirmation email.')
+    if (appointment.emailSent || appointment.whatsappSent) {
+      try {
+        const confirmationResult = await deliverPatientConfirmation(appointment)
+        appointment.confirmationSent = Boolean(confirmationResult?.sent)
+      } catch {
+        console.error('Failed to send patient confirmation email.')
+      }
     }
 
     const notificationStatus = appointment.emailSent || appointment.whatsappSent ? 'sent' : 'failed'
     try {
-      await (database || getDatabasePool()).execute(
+      const db = await getReadyDatabase()
+      await db.execute(
         `UPDATE appointments
          SET email_sent = ?, confirmation_sent = ?, whatsapp_sent = ?, notification_status = ?
          WHERE id = ?`,
@@ -346,19 +369,23 @@ export function createApp({
       email: typeof body.email === 'string' ? body.email.trim() : '',
       message: typeof body.message === 'string' ? body.message.trim() : '',
     }
-
     if (
-      !enquiry.name || enquiry.name.length > 100
+      !enquiry.name
+      || enquiry.name.length > 100
+      || !enquiry.phone
+      || enquiry.phone.length > 25
       || !/^\+?[0-9()\s-]{7,25}$/.test(enquiry.phone)
+      || !enquiry.message
+      || enquiry.message.length > 2000
       || enquiry.email.length > 254
       || (enquiry.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(enquiry.email))
-      || !enquiry.message || enquiry.message.length > 2000
     ) {
-      return res.status(400).json({ message: 'Enter a valid name, phone number, optional email and message.' })
+      return res.status(400).json({ message: 'Enter valid name, phone, email and message details.' })
     }
 
     try {
-      await (database || getDatabasePool()).execute(
+      const db = await getReadyDatabase()
+      await db.execute(
         `INSERT INTO contact_enquiries (id, name, phone, email, message)
          VALUES (?, ?, ?, ?, ?)`,
         [crypto.randomUUID(), enquiry.name, enquiry.phone, enquiry.email || null, enquiry.message],
@@ -373,22 +400,10 @@ export function createApp({
   app.get('/api/testimonials', (_req, res) => res.json([]))
   app.get('/api/availability', (_req, res) => res.json({ video: true, homeVisit: true, hours: 'Mon-Sat, 9:00 AM - 6:00 PM' }))
 
-  app.use((error, _req, res, _next) => {
-    if (res.headersSent) return
-    console.error('Request failed.')
-    res.status(500).json({ message: 'The request could not be processed.' })
-  })
-
   return app
 }
 
 const app = createApp()
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
-  Promise.resolve()
-    .then(() => initializeDatabase(getDatabasePool()))
-    .then(() => app.listen(port, () => console.log(`API listening on port ${port}`)))
-    .catch(() => {
-      console.error('Database initialization failed; API did not start.')
-      process.exitCode = 1
-    })
+  app.listen(port, () => console.log(`API listening on port ${port}`))
 }

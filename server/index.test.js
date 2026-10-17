@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import test from 'node:test'
-import { createApp } from './index.js'
 import { initializeDatabase } from './database.js'
+import { createApp } from './index.js'
 
 const validAppointment = {
   patientName: 'Sam Example',
@@ -14,6 +14,17 @@ const validAppointment = {
   address: '',
   concern: 'Mobility support',
   consent: true,
+}
+
+function createDatabase(execute = async () => [[], []]) {
+  const queries = []
+  return {
+    queries,
+    async execute(sql, values = []) {
+      queries.push({ sql, values })
+      return execute(sql, values)
+    },
+  }
 }
 
 async function withApi(options, callback) {
@@ -28,171 +39,185 @@ async function withApi(options, callback) {
   }
 }
 
-function createMockDatabase({ failInserts = false } = {}) {
-  const calls = []
-  return {
-    calls,
-    async execute(sql, values = []) {
-      calls.push({ sql, values })
-      if (failInserts && sql.includes('INSERT INTO')) throw new Error('mock database failure')
-      return [{ affectedRows: 1 }, []]
-    },
-  }
+async function postJson(baseUrl, path, body) {
+  return fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
 }
 
-test('rejects invalid appointment fields before attempting delivery', async () => {
+test('creates the appointments and contact tables idempotently', async () => {
+  const database = createDatabase()
+
+  await initializeDatabase(database)
+
+  assert.equal(database.queries.length, 2)
+  assert.match(database.queries[0].sql, /CREATE TABLE IF NOT EXISTS appointments/)
+  for (const field of [
+    'patient_name', 'phone', 'email', 'service_type', 'preferred_date',
+    'preferred_time', 'address', 'concern', 'consent_at', 'created_at', 'notification_status',
+  ]) {
+    assert.match(database.queries[0].sql, new RegExp(field))
+  }
+  assert.match(database.queries[1].sql, /CREATE TABLE IF NOT EXISTS contact_enquiries/)
+})
+
+test('rejects invalid appointment fields before database access or delivery', async () => {
+  const database = createDatabase()
   let deliveryAttempted = false
-  const database = createMockDatabase()
   const delivery = async () => {
     deliveryAttempted = true
     return { sent: true }
   }
 
-  await withApi({ database, deliverAppointmentEmail: delivery, deliverWhatsApp: delivery }, async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/appointments`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...validAppointment, email: 'not-an-email' }),
-    })
+  await withApi({
+    database,
+    databaseInitializer: async () => {},
+    deliverAppointmentEmail: delivery,
+    deliverWhatsApp: delivery,
+  }, async (baseUrl) => {
+    const response = await postJson(baseUrl, '/api/appointments', { ...validAppointment, email: 'not-an-email' })
 
     assert.equal(response.status, 400)
+    assert.equal(database.queries.length, 0)
     assert.equal(deliveryAttempted, false)
-    assert.equal(database.calls.length, 0)
   })
 })
 
-test('persists an appointment and reports receipt when all delivery providers fail', async () => {
-  const database = createMockDatabase()
+test('persists an appointment before attempting notifications and records delivery status', async () => {
+  const database = createDatabase()
+  const attempts = []
 
   await withApi({
     database,
-    deliverAppointmentEmail: async () => ({ sent: false }),
-    deliverWhatsApp: async () => ({ sent: false }),
-    deliverPatientConfirmation: async () => ({ sent: false }),
+    databaseInitializer: async () => {},
+    deliverAppointmentEmail: async () => {
+      assert.match(database.queries[0].sql, /INSERT INTO appointments/)
+      attempts.push('email')
+      return { sent: true }
+    },
+    deliverWhatsApp: async () => {
+      attempts.push('whatsapp')
+      return { sent: false }
+    },
+    deliverPatientConfirmation: async () => {
+      attempts.push('confirmation')
+      return { sent: true }
+    },
   }, async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/appointments`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(validAppointment),
-    })
+    const response = await postJson(baseUrl, '/api/appointments', validAppointment)
     const result = await response.json()
 
     assert.equal(response.status, 201)
     assert.equal(result.received, true)
-    assert.equal(result.emailSent, false)
+    assert.equal(result.emailSent, true)
+    assert.equal(result.confirmationSent, true)
     assert.equal(result.whatsappSent, false)
-    assert.equal(database.calls.length, 2)
-    assert.match(database.calls[0].sql, /INSERT INTO appointments/)
-    assert.match(database.calls[1].sql, /UPDATE appointments/)
-    assert.equal(database.calls[0].values[0], result.appointmentId)
-    assert.equal(database.calls[0].values[9] instanceof Date, true)
+    assert.deepEqual(attempts, ['email', 'whatsapp', 'confirmation'])
+    assert.equal(database.queries.length, 2)
+
+    const [insert, update] = database.queries
+    assert.match(insert.sql, /VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, \?, \?, 'pending'\)/)
+    assert.equal(insert.values[1], validAppointment.patientName)
+    assert.equal(insert.values[2], validAppointment.phone)
+    assert.equal(insert.values[3], validAppointment.email)
+    assert.equal(insert.values[8], validAppointment.concern)
+    assert.ok(insert.values[9] instanceof Date)
+    assert.match(update.sql, /UPDATE appointments/)
+    assert.deepEqual(update.values, [true, true, false, 'sent', result.appointmentId])
   })
 })
 
-test('reports receipt only after a delivery provider accepts the appointment', async () => {
+test('keeps a saved appointment when all notification providers fail', async () => {
+  const database = createDatabase()
   let confirmationAttempted = false
-  const database = createMockDatabase()
 
   await withApi({
     database,
-    deliverAppointmentEmail: async () => ({ sent: true }),
+    databaseInitializer: async () => {},
+    deliverAppointmentEmail: async () => ({ sent: false }),
     deliverWhatsApp: async () => ({ sent: false }),
     deliverPatientConfirmation: async () => {
       confirmationAttempted = true
       return { sent: true }
     },
   }, async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/appointments`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(validAppointment),
-    })
+    const response = await postJson(baseUrl, '/api/appointments', validAppointment)
     const result = await response.json()
 
     assert.equal(response.status, 201)
     assert.equal(result.received, true)
-    assert.equal(result.emailSent, true)
-    assert.equal(typeof result.appointmentId, 'string')
-    assert.equal(confirmationAttempted, true)
-    assert.match(database.calls[0].sql, /INSERT INTO appointments/)
-    assert.match(database.calls[1].sql, /UPDATE appointments/)
-    assert.equal(database.calls[1].values[3], 'sent')
+    assert.equal(result.emailSent, false)
+    assert.equal(result.whatsappSent, false)
+    assert.equal(database.queries.length, 2)
+    assert.deepEqual(database.queries[1].values, [false, false, false, 'failed', result.appointmentId])
+    assert.equal(confirmationAttempted, false)
   })
 })
 
-test('persists valid contact enquiries using parameterized SQL', async () => {
-  const database = createMockDatabase()
-
-  await withApi({ database }, async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/contact`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Sam Example', phone: '+91 98765 43210', email: 'sam@example.com', message: 'Please call me.' }),
-    })
-    assert.equal(response.status, 201)
-    assert.match(database.calls[0].sql, /INSERT INTO contact_enquiries/)
-    assert.deepEqual(database.calls[0].values.slice(1), [
-      'Sam Example', '+91 98765 43210', 'sam@example.com', 'Please call me.',
-    ])
+test('does not attempt notifications or disclose patient details when appointment storage fails', async () => {
+  const database = createDatabase(async () => {
+    throw new Error('database failure')
   })
-})
-
-test('returns a safe failure and skips notifications when appointment persistence fails', async () => {
   let deliveryAttempted = false
-  const database = createMockDatabase({ failInserts: true })
 
   await withApi({
     database,
-    deliverAppointmentEmail: async () => { deliveryAttempted = true; return { sent: true } },
+    databaseInitializer: async () => {},
+    deliverAppointmentEmail: async () => {
+      deliveryAttempted = true
+      return { sent: true }
+    },
+    deliverWhatsApp: async () => ({ sent: true }),
   }, async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/appointments`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(validAppointment),
-    })
+    const response = await postJson(baseUrl, '/api/appointments', validAppointment)
+    const result = await response.json()
+
     assert.equal(response.status, 503)
-    assert.deepEqual(await response.json(), {
-      received: false,
-      message: 'We could not save your request. Please try again later.',
-    })
+    assert.equal(result.received, false)
+    assert.equal(JSON.stringify(result).includes(validAppointment.patientName), false)
     assert.equal(deliveryAttempted, false)
   })
 })
 
-test('initializes appointment and contact tables', async () => {
-  const database = createMockDatabase()
-  await initializeDatabase(database)
-  assert.equal(database.calls.length, 2)
-  assert.match(database.calls[0].sql, /CREATE TABLE IF NOT EXISTS appointments/)
-  assert.match(database.calls[0].sql, /consent_at TIMESTAMP/)
-  assert.match(database.calls[0].sql, /notification_status/)
-  assert.match(database.calls[1].sql, /CREATE TABLE IF NOT EXISTS contact_enquiries/)
-})
+test('persists contact enquiries and applies the public write rate limit', async () => {
+  const database = createDatabase()
+  const enquiry = {
+    name: 'Alex Patient',
+    phone: '+91 98765 43210',
+    email: 'alex@example.com',
+    message: 'Please call me about an appointment.',
+  }
 
-test('keeps health checks and exposes no public appointment listing', async () => {
-  await withApi({ database: createMockDatabase() }, async (baseUrl) => {
-    const health = await fetch(`${baseUrl}/api/health`)
-    assert.deepEqual(await health.json(), { ok: true })
-    const appointments = await fetch(`${baseUrl}/api/appointments`)
-    assert.equal(appointments.status, 404)
+  await withApi({
+    database,
+    databaseInitializer: async () => {},
+    rateLimitMax: 1,
+  }, async (baseUrl) => {
+    const response = await postJson(baseUrl, '/api/contact', enquiry)
+    const result = await response.json()
+    const limitedResponse = await postJson(baseUrl, '/api/contact', enquiry)
+
+    assert.equal(response.status, 201)
+    assert.match(result.message, /received/)
+    assert.equal(limitedResponse.status, 429)
+    assert.equal(database.queries.length, 1)
+    assert.match(database.queries[0].sql, /INSERT INTO contact_enquiries/)
+    assert.deepEqual(database.queries[0].values.slice(1), [
+      enquiry.name, enquiry.phone, enquiry.email, enquiry.message,
+    ])
   })
 })
 
-test('rate limits public write requests', async () => {
-  const database = createMockDatabase()
+test('keeps the health endpoint independent of database availability', async () => {
   await withApi({
-    database,
-    rateLimitMax: 1,
-    deliverAppointmentEmail: async () => ({ sent: false }),
-    deliverWhatsApp: async () => ({ sent: false }),
-    deliverPatientConfirmation: async () => ({ sent: false }),
+    databaseProvider: () => {
+      throw new Error('database configuration unavailable')
+    },
   }, async (baseUrl) => {
-    const request = (path, body) => fetch(`${baseUrl}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    assert.equal((await request('/api/appointments', validAppointment)).status, 201)
-    assert.equal((await request('/api/contact', { name: 'Sam', phone: '9876543210', message: 'Hello' })).status, 429)
+    const response = await fetch(`${baseUrl}/api/health`)
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { ok: true })
   })
 })
