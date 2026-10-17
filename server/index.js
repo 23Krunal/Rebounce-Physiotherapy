@@ -1,9 +1,11 @@
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
+import rateLimit from 'express-rate-limit'
 import nodemailer from 'nodemailer'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { getDatabasePool, initializeDatabase } from './database.js'
 
 const port = Number(process.env.PORT || 4001)
 const adminEmail = (process.env.ADMIN_EMAIL || 'shreyaparmar623@gmail.com').trim()
@@ -134,25 +136,6 @@ async function sendPatientConfirmationEmail(appointment) {
   return { sent: true }
 }
 
-function buildWhatsAppUrl(appointment) {
-  const message = [
-    'Hello ReBounce Physiotherapy,',
-    '',
-    `I am ${appointment.patientName}.`,
-    `My phone number is ${appointment.phone}.`,
-    `My email is ${appointment.email}.`,
-    `I want ${appointment.serviceType}.`,
-    `Preferred date: ${appointment.preferredDate}.`,
-    `Preferred time: ${appointment.preferredTime}.`,
-    appointment.address ? `Address: ${appointment.address}.` : '',
-    appointment.concern ? `Concern: ${appointment.concern}.` : '',
-    '',
-    'Please review my enquiry and call me back shortly.',
-  ].filter(Boolean).join('\n')
-
-  return `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`
-}
-
 async function sendAppointmentWhatsApp(appointment) {
   if (!metaWhatsAppAccessToken || !metaWhatsAppPhoneNumberId || !metaWhatsAppTemplateName || !whatsappNumber) {
     return { sent: false }
@@ -190,13 +173,13 @@ async function sendAppointmentWhatsApp(appointment) {
     })
 
     if (!response.ok) {
-      console.error('Meta WhatsApp notification failed:', response.status, await response.text())
+      console.error('Meta WhatsApp notification failed.')
       return { sent: false }
     }
 
     return { sent: true }
-  } catch (error) {
-    console.error('Meta WhatsApp notification failed:', error)
+  } catch {
+    console.error('Meta WhatsApp notification failed.')
     return { sent: false }
   }
 }
@@ -205,11 +188,19 @@ export function createApp({
   deliverAppointmentEmail = sendAppointmentEmail,
   deliverPatientConfirmation = sendPatientConfirmationEmail,
   deliverWhatsApp = sendAppointmentWhatsApp,
+  database,
+  rateLimitMax = 20,
   allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173').split(',').map((origin) => origin.trim()),
 } = {}) {
   const app = express()
-  const enquiries = []
   const allowedOriginSet = new Set(allowedOrigins.filter(Boolean))
+  const writeRateLimit = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: rateLimitMax,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    handler: (_req, res) => res.status(429).json({ message: 'Too many requests. Please try again later.' }),
+  })
 
   app.use(cors({
     origin(origin, callback) {
@@ -219,15 +210,15 @@ export function createApp({
   }))
   app.use(express.json({ limit: '20kb' }))
 
-app.get('/', (_req, res) => {
-  res.status(200).json({
-    ok: true,
-    service: 'PhysioEase API',
+  app.get('/', (_req, res) => {
+    res.status(200).json({
+      ok: true,
+      service: 'PhysioEase API',
+    })
   })
-})
 
-app.get('/api/health', (_req, res) => res.json({ ok: true }))
-  app.post('/api/appointments', async (req, res) => {
+  app.get('/api/health', (_req, res) => res.json({ ok: true }))
+  app.post('/api/appointments', writeRateLimit, async (req, res) => {
     const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}
     const appointment = Object.fromEntries(
       Object.entries({
@@ -270,40 +261,72 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }))
 
     Object.assign(appointment, {
       id: crypto.randomUUID(),
-      createdAt: new Date().toISOString(),
+      consentAt: new Date(),
       emailSent: false,
       confirmationSent: false,
       whatsappSent: false,
     })
-    appointment.whatsappUrl = buildWhatsAppUrl(appointment)
+    try {
+      await (database || getDatabasePool()).execute(
+        `INSERT INTO appointments
+          (id, patient_name, phone, email, service_type, preferred_date, preferred_time,
+           address, concern, consent_at, notification_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+        [
+          appointment.id,
+          appointment.patientName,
+          appointment.phone,
+          appointment.email,
+          appointment.serviceType,
+          appointment.preferredDate,
+          appointment.preferredTime,
+          appointment.address,
+          appointment.concern,
+          appointment.consentAt,
+        ],
+      )
+    } catch {
+      console.error('Failed to save appointment to the database.')
+      return res.status(503).json({ received: false, message: 'We could not save your request. Please try again later.' })
+    }
 
     try {
       const emailResult = await deliverAppointmentEmail(appointment)
       appointment.emailSent = Boolean(emailResult?.sent)
-    } catch (error) {
-      console.error('Failed to send consultation email:', error)
+    } catch {
+      console.error('Failed to send consultation email.')
     }
 
     try {
       const whatsappResult = await deliverWhatsApp(appointment)
       appointment.whatsappSent = Boolean(whatsappResult?.sent)
-    } catch (error) {
-      console.error('Failed to send consultation WhatsApp:', error)
-    }
-
-    if (!appointment.emailSent && !appointment.whatsappSent) {
-      return res.status(503).json({
-        received: false,
-        message: 'We could not send your request. Please contact us directly or use WhatsApp.',
-        whatsappUrl: appointment.whatsappUrl,
-      })
+    } catch {
+      console.error('Failed to send consultation WhatsApp.')
     }
 
     try {
       const confirmationResult = await deliverPatientConfirmation(appointment)
       appointment.confirmationSent = Boolean(confirmationResult?.sent)
-    } catch (error) {
-      console.error('Failed to send patient confirmation email:', error)
+    } catch {
+      console.error('Failed to send patient confirmation email.')
+    }
+
+    const notificationStatus = appointment.emailSent || appointment.whatsappSent ? 'sent' : 'failed'
+    try {
+      await (database || getDatabasePool()).execute(
+        `UPDATE appointments
+         SET email_sent = ?, confirmation_sent = ?, whatsapp_sent = ?, notification_status = ?
+         WHERE id = ?`,
+        [
+          appointment.emailSent,
+          appointment.confirmationSent,
+          appointment.whatsappSent,
+          notificationStatus,
+          appointment.id,
+        ],
+      )
+    } catch {
+      console.error('Failed to update appointment notification status.')
     }
 
     return res.status(201).json({
@@ -315,19 +338,57 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }))
     })
   })
 
-  app.post('/api/contact', (req, res) => {
-    const { name, phone, message } = req.body
-    if (!name || !phone || !message) return res.status(400).json({ message: 'Name, phone and message are required.' })
-    enquiries.unshift({ id: crypto.randomUUID(), ...req.body, createdAt: new Date().toISOString(), status: 'New' })
-    res.status(201).json({ message: 'Thanks. Your enquiry has been received.' })
+  app.post('/api/contact', writeRateLimit, async (req, res) => {
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}
+    const enquiry = {
+      name: typeof body.name === 'string' ? body.name.trim() : '',
+      phone: typeof body.phone === 'string' ? body.phone.trim() : '',
+      email: typeof body.email === 'string' ? body.email.trim() : '',
+      message: typeof body.message === 'string' ? body.message.trim() : '',
+    }
+
+    if (
+      !enquiry.name || enquiry.name.length > 100
+      || !/^\+?[0-9()\s-]{7,25}$/.test(enquiry.phone)
+      || enquiry.email.length > 254
+      || (enquiry.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(enquiry.email))
+      || !enquiry.message || enquiry.message.length > 2000
+    ) {
+      return res.status(400).json({ message: 'Enter a valid name, phone number, optional email and message.' })
+    }
+
+    try {
+      await (database || getDatabasePool()).execute(
+        `INSERT INTO contact_enquiries (id, name, phone, email, message)
+         VALUES (?, ?, ?, ?, ?)`,
+        [crypto.randomUUID(), enquiry.name, enquiry.phone, enquiry.email || null, enquiry.message],
+      )
+    } catch {
+      console.error('Failed to save contact enquiry to the database.')
+      return res.status(503).json({ message: 'We could not save your enquiry. Please try again later.' })
+    }
+
+    return res.status(201).json({ message: 'Thanks. Your enquiry has been received.' })
   })
   app.get('/api/testimonials', (_req, res) => res.json([]))
   app.get('/api/availability', (_req, res) => res.json({ video: true, homeVisit: true, hours: 'Mon-Sat, 9:00 AM - 6:00 PM' }))
+
+  app.use((error, _req, res, _next) => {
+    if (res.headersSent) return
+    console.error('Request failed.')
+    res.status(500).json({ message: 'The request could not be processed.' })
+  })
 
   return app
 }
 
 const app = createApp()
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
-  app.listen(port, () => console.log(`API listening on port ${port}`))
+  Promise.resolve()
+    .then(() => initializeDatabase(getDatabasePool()))
+    .then(() => app.listen(port, () => console.log(`API listening on port ${port}`)))
+    .catch(() => {
+      console.error('Database initialization failed; API did not start.')
+      process.exitCode = 1
+    })
 }
