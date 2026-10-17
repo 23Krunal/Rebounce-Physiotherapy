@@ -404,6 +404,30 @@ export function createApp({
 }
 
 const app = createApp()
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
-  app.listen(port, () => console.log(`API listening on port ${port}`))
+if (
+  process.argv[1] &&
+  pathToFileURL(resolve(process.argv[1])).href === import.meta.url
+) {
+  async function startServer() {
+    try {
+      console.log('Checking database connection...');
+
+      const database = getDatabasePool();
+      await initializeDatabase(database);
+
+      console.log('Database connected; tables initialized.');
+
+      app.listen(port, () => {
+        console.log(`API listening on port ${port}`);
+      });
+    } catch (error) {
+      console.error(
+        'Database startup failed:',
+        error?.code || error?.message || 'Unknown error'
+      );
+      process.exit(1);
+    }
+  }
+
+  startServer();
 }
