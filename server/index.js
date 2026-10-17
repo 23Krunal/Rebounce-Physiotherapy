@@ -219,7 +219,14 @@ export function createApp({
   }))
   app.use(express.json({ limit: '20kb' }))
 
-  app.get('/api/health', (_req, res) => res.json({ ok: true }))
+app.get('/', (_req, res) => {
+  res.status(200).json({
+    ok: true,
+    service: 'PhysioEase API',
+  })
+})
+
+app.get('/api/health', (_req, res) => res.json({ ok: true }))
   app.post('/api/appointments', async (req, res) => {
     const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}
     const appointment = Object.fromEntries(
